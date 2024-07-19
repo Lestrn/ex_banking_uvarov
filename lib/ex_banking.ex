@@ -5,15 +5,17 @@ defmodule ExBanking do
   Documentation for `ExBanking`.
   https://coingaming.github.io/elixir-test/
   """
+  @spec start_link(any()) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link(initial_state \\ %{}) do
     GenServer.start_link(__MODULE__, initial_state, name: __MODULE__)
   end
 
+  @spec init(any()) :: {:ok, any()}
   def init(initial_state) do
     {:ok, initial_state}
   end
 
-  #working functions
+  # working functions
 
   @spec create_user(any()) :: :ignore | :ok | {:error, any()} | {:ok, pid()}
   def create_user(username) do
@@ -39,31 +41,62 @@ defmodule ExBanking do
     GenServer.call(__MODULE__, {:get_balance, parameters})
   end
 
-  #handler
+  @spec send(
+          from_user :: String.t(),
+          to_user :: String.t(),
+          amount :: number,
+          currency :: String.t()
+        ) :: {:ok, from_user_balance :: number, to_user_balance :: number}
+  def send(from_username, to_username, amount, currency) do
+    parameters = %{
+      from_username: from_username,
+      to_username: to_username,
+      amount: amount,
+      currency: currency
+    }
+
+    GenServer.call(__MODULE__, {:send, parameters})
+  end
+
+  # handler
   def handle_cast({:add_new_user, username}, state) do
     {:noreply, Map.put(state, username, %User{name: username, balance: %{}})}
   end
 
   def handle_call({:deposit, parameters}, _from, state) do
-    updated_state = Map.get(state, parameters.username)
-    |> deposit_balance(parameters.currency, parameters.amount)
-    |> update_user(parameters.username)
-    |> update_state(parameters.username, state)
-    {:reply, {:ok, updated_state |> Map.get(parameters.username) |> extract_balance_from_user(parameters.currency)}, updated_state}
+    {:ok, updated_state} = deposit(parameters.username, parameters.amount, parameters.currency, state)
+
+    {:reply,
+     {:ok,
+      updated_state
+      |> Map.get(parameters.username)
+      |> extract_balance_from_user(parameters.currency)}, updated_state}
   end
 
-
-
   def handle_call({:withdraw, parameters}, _from, state) do
-    with {:ok,  balance} <- Map.get(state, parameters.username)
-    |> withdraw_balance(parameters.currency, parameters.amount) do
-      updated_state = update_user(balance, parameters.username)
-      |> update_state(parameters.username, state)
-      {:reply, {:ok, updated_state |> Map.get(parameters.username) |> extract_balance_from_user(parameters.currency)}, updated_state}
-    else
-      result -> {:reply, result, state}
-    end
+    case withdraw(parameters.username, parameters.amount, parameters.currency, state) do
+      {:ok, new_state} ->
+        {:reply,
+         {:ok,
+          Map.get(new_state, parameters.username)
+          |> extract_balance_from_user(parameters.currency)}, new_state}
 
+      {:error, msg} ->
+        {:reply, msg, state}
+    end
+  end
+
+  def handle_call({:send, parameters}, _from, state) do
+    with {:ok, updated_state_from_sender} <-
+           withdraw(parameters.from_username, parameters.amount, parameters.currency, state),
+         {:ok, updated_state_from_receiver} <-
+           deposit(parameters.to_username, parameters.amount, parameters.currency, updated_state_from_sender) do
+      sender_balance = Map.get(updated_state_from_receiver, parameters.from_username) |> extract_balance_from_user(parameters.currency)
+      receiver_balance = Map.get(updated_state_from_receiver, parameters.to_username) |> extract_balance_from_user(parameters.currency)
+      {:reply, {:ok, sender_balance, receiver_balance}, updated_state_from_receiver}
+    else
+      error -> {:reply, error, state}
+    end
   end
 
   def handle_call({:get_balance, parameters}, _from, state) do
@@ -71,7 +104,29 @@ defmodule ExBanking do
     {:reply, {:ok, Map.get(user.balance, parameters.currency)}, state}
   end
 
-  #private functions
+  # private functions
+
+  defp deposit(username, amount, currency, state) do
+    updated_state = Map.get(state, username)
+    |> deposit_balance(currency, amount)
+    |> update_user(username)
+    |> update_state(username, state)
+    {:ok, updated_state}
+  end
+
+  defp withdraw(username, amount, currency, state) do
+    with {:ok, balance} <-
+           Map.get(state, username)
+           |> withdraw_balance(currency, amount) do
+      updated_state =
+        update_user(balance, username)
+        |> update_state(username, state)
+
+      {:ok, updated_state}
+    else
+      result -> {:error, result}
+    end
+  end
 
   defp extract_balance_from_user(user, currency) do
     Map.get(user.balance, currency, 0)
@@ -83,9 +138,13 @@ defmodule ExBanking do
 
   defp withdraw_balance(user, currency, amount) do
     current_balance = extract_balance_from_user(user, currency)
+
     cond do
-      current_balance >= amount -> {:ok, Map.put(user.balance, currency, current_balance - amount)}
-      true -> {:error, :not_enough_money}
+      current_balance >= amount ->
+        {:ok, Map.put(user.balance, currency, current_balance - amount)}
+
+      true ->
+        {:error, :not_enough_money}
     end
   end
 
