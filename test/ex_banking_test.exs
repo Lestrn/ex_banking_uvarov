@@ -68,7 +68,7 @@ defmodule ExBankingTest do
     assert {:ok, 10000} == ExBanking.get_balance("user4", "USD")
   end
 
-  test "exceeding send max requests" do
+  test "exceeding send max requests to sender" do
     ExBanking.create_user("user5")
     ExBanking.create_user("user6")
     ExBanking.deposit("user5", 10000, "USD")
@@ -82,7 +82,30 @@ defmodule ExBankingTest do
       end
 
     results = Enum.map(tasks, &Task.await(&1))
-    too_many_requests_count = Enum.count(results, fn result -> result == {:error, :too_many_requests_to_user} end)
+    too_many_requests_count = Enum.count(results, fn result -> result == {:error, :too_many_requests_to_sender} end)
+
+    assert too_many_requests_count == 2
+    assert {:ok, 9000} == ExBanking.get_balance("user5", "USD")
+    assert {:ok, 2000} == ExBanking.get_balance("user6", "USD")
+  end
+
+  test "exceeding send max requests to receiver" do
+    ExBanking.create_user("user5")
+    ExBanking.create_user("user6")
+    ExBanking.deposit("user5", 10000, "USD")
+    ExBanking.deposit("user6", 1000, "USD")
+
+    tasks =
+      for _ <- 1..6 do
+        [
+        Task.async(fn ->
+          ExBanking.send("user5", "user6", 100, "USD")
+        end)
+      ]
+      end
+
+    results = Enum.map(tasks, &Task.await(&1))
+    too_many_requests_count = Enum.count(results, fn result -> result |> IO.inspect() end)
 
     assert too_many_requests_count == 2
     assert {:ok, 9000} == ExBanking.get_balance("user5", "USD")
@@ -107,13 +130,14 @@ defmodule ExBankingTest do
       |> List.flatten()
 
     results = Enum.map(tasks, &Task.await(&1))
-    too_many_requests_count = Enum.count(results, fn result -> result == {:error, :too_many_requests_to_user} end)
+    too_many_requests_count = Enum.count(results, fn result -> result == {:error, :too_many_requests_to_sender} end)
 
     # Checking that there are more than 2 requests that exceeded the limit (since we expect 10 successful ones)
     assert too_many_requests_count >= 2
 
     # Checking the final balance
-    assert {:ok, _balance} = ExBanking.get_balance("user1", "USD")
+    assert {:ok, 9950} == ExBanking.get_balance("user1", "USD")
+
   end
 
 
