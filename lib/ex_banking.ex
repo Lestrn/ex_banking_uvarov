@@ -63,16 +63,19 @@ defmodule ExBanking do
     {:noreply, Map.put(state, username, %User{name: username, balance: %{}})}
   end
 
-  def handle_cast({:add_amount_requests_for_user, parameters}, state) do
-    {:noreply, update_amount_of_requests_for_user(state, parameters, true)}
+  def handle_cast({:add_amount_requests_for_user, username}, state) do
+    {:noreply, update_amount_of_requests_for_user(state, username, true)}
   end
 
   def handle_call({:deposit, parameters}, _from, state) do
+    # for check pending requests
+    :timer.sleep(10)
+
     with {:error, error} <- check_pending_requests(state, parameters.username) do
       {:reply, error, state}
     else
       :ok ->
-        GenServer.cast(__MODULE__, {:add_amount_requests_for_user, parameters})
+        GenServer.cast(__MODULE__, {:add_amount_requests_for_user, parameters.username})
 
         {:ok, updated_state} =
           deposit(parameters.username, parameters.amount, parameters.currency, state)
@@ -82,75 +85,115 @@ defmodule ExBanking do
           updated_state
           |> Map.get(parameters.username)
           |> extract_balance_from_user(parameters.currency)},
-         updated_state |> update_amount_of_requests_for_user(parameters, false)}
+         updated_state |> update_amount_of_requests_for_user(parameters.username, false)}
     end
   end
 
   def handle_call({:withdraw, parameters}, _from, state) do
-    case withdraw(parameters.username, parameters.amount, parameters.currency, state) do
-      {:ok, new_state} ->
-        {:reply,
-         {:ok,
-          Map.get(new_state, parameters.username)
-          |> extract_balance_from_user(parameters.currency)}, new_state}
+    # for check pending requests
+    :timer.sleep(10)
 
-      {:error, msg} ->
-        {:reply, msg, state}
+    with {:error, error} <- check_pending_requests(state, parameters.username) do
+      {:reply, error, state}
+    else
+      :ok ->
+        GenServer.cast(__MODULE__, {:add_amount_requests_for_user, parameters.username})
+
+        case withdraw(parameters.username, parameters.amount, parameters.currency, state) do
+          {:ok, new_state} ->
+            {:reply,
+             {:ok,
+              Map.get(new_state, parameters.username)
+              |> extract_balance_from_user(parameters.currency)},
+             new_state |> update_amount_of_requests_for_user(parameters.username, false)}
+
+          {:error, msg} ->
+            {:reply, msg, state |> update_amount_of_requests_for_user(parameters.username, false)}
+        end
     end
   end
 
   def handle_call({:send, parameters}, _from, state) do
-    with {:ok, updated_state_from_sender} <-
-           withdraw(parameters.from_username, parameters.amount, parameters.currency, state),
-         {:ok, updated_state_from_receiver} <-
-           deposit(
-             parameters.to_username,
-             parameters.amount,
-             parameters.currency,
-             updated_state_from_sender
-           ) do
-      sender_balance =
-        Map.get(updated_state_from_receiver, parameters.from_username)
-        |> extract_balance_from_user(parameters.currency)
+    # for check pending requests
+    :timer.sleep(10)
 
-      receiver_balance =
-        Map.get(updated_state_from_receiver, parameters.to_username)
-        |> extract_balance_from_user(parameters.currency)
-
-      {:reply, {:ok, sender_balance, receiver_balance}, updated_state_from_receiver}
+    with {:error, error} <- check_pending_requests(state, parameters.from_username),
+          check_pending_requests(state, parameters.to_username) do
+      {:reply, error, state}
     else
-      error -> {:reply, error, state}
+      :ok ->
+        GenServer.cast(__MODULE__, {:add_amount_requests_for_user, parameters.from_username})
+        GenServer.cast(__MODULE__, {:add_amount_requests_for_user, parameters.to_username})
+
+        with {:ok, updated_state_from_sender} <-
+               withdraw(parameters.from_username, parameters.amount, parameters.currency, state),
+             {:ok, updated_state_from_receiver} <-
+               deposit(
+                 parameters.to_username,
+                 parameters.amount,
+                 parameters.currency,
+                 updated_state_from_sender
+               ) do
+          sender_balance =
+            Map.get(updated_state_from_receiver, parameters.from_username)
+            |> extract_balance_from_user(parameters.currency)
+
+          receiver_balance =
+            Map.get(updated_state_from_receiver, parameters.to_username)
+            |> extract_balance_from_user(parameters.currency)
+
+          {:reply, {:ok, sender_balance, receiver_balance},
+           updated_state_from_receiver
+           |> update_amount_of_requests_for_user(parameters.from_username, false)
+           |> update_amount_of_requests_for_user(parameters.to_username, false)}
+        else
+          error -> {:reply, error, state
+          |> update_amount_of_requests_for_user(parameters.from_username, false)
+          |> update_amount_of_requests_for_user(parameters.to_username, false)}
+        end
     end
   end
 
   def handle_call({:get_balance, parameters}, _from, state) do
-    user = state |> Map.get(parameters.username)
-    {:reply, {:ok, Map.get(user.balance, parameters.currency)}, state}
+    # for check pending requests
+    :timer.sleep(10)
+
+    with {:error, error} <- check_pending_requests(state, parameters.username) do
+      {:reply, error, state}
+    else
+      :ok ->
+        GenServer.cast(__MODULE__, {:add_amount_requests_for_user, parameters.username})
+        user = state |> Map.get(parameters.username)
+
+        {:reply, {:ok, Map.get(user.balance, parameters.currency)},
+         state |> update_amount_of_requests_for_user(parameters.username, false)}
+    end
   end
 
   # private functions
 
-  defp update_amount_of_requests_for_user(state, parameters, is_add) when is_add do
-    user = state |> Map.get(parameters.username)
+  defp update_amount_of_requests_for_user(state, username, is_add) when is_add do
+    user = state |> Map.get(username)
+
     state
     |> Map.put(
-      parameters.username,
+      username,
       update_user(user.balance, user.name, user.pending_requests + 1)
     )
   end
 
-  defp update_amount_of_requests_for_user(state, parameters, _is_add) do
-    user = state |> Map.get(parameters.username)
+  defp update_amount_of_requests_for_user(state, username, _is_add) do
+    user = state |> Map.get(username)
 
     state
     |> Map.put(
-      parameters.username,
+      username,
       update_user(user.balance, user.name, user.pending_requests - 1)
     )
   end
 
   defp check_pending_requests(state, username) do
-    if (abs(extract_pending_requests_from_state(state, username)) + 1 <= 10) do
+    if abs(extract_pending_requests_from_state(state, username)) + 1 <= 10 do
       :ok
     else
       {:error, {:error, :too_many_requests_to_user}}
