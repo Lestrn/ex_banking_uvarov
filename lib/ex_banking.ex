@@ -69,7 +69,7 @@ defmodule ExBanking do
 
   def handle_call({:deposit, parameters}, _from, state) do
     with {:error, error} <- check_pending_requests(state, parameters.username) do
-      {:reply, {:error, error}, state}
+      {:reply, error, state}
     else
       :ok ->
         GenServer.cast(__MODULE__, {:add_amount_requests_for_user, parameters})
@@ -80,7 +80,6 @@ defmodule ExBanking do
         {:reply,
          {:ok,
           updated_state
-          |> update_amount_of_requests_for_user(parameters, false)
           |> Map.get(parameters.username)
           |> extract_balance_from_user(parameters.currency)},
          updated_state |> update_amount_of_requests_for_user(parameters, false)}
@@ -133,7 +132,6 @@ defmodule ExBanking do
 
   defp update_amount_of_requests_for_user(state, parameters, is_add) when is_add do
     user = state |> Map.get(parameters.username)
-
     state
     |> Map.put(
       parameters.username,
@@ -152,10 +150,10 @@ defmodule ExBanking do
   end
 
   defp check_pending_requests(state, username) do
-    if extract_pending_requests_from_state(state, username) + 1 <= 10 do
+    if (abs(extract_pending_requests_from_state(state, username)) + 1 <= 10) do
       :ok
     else
-      {:error, :too_many_requests_to_user}
+      {:error, {:error, :too_many_requests_to_user}}
     end
   end
 

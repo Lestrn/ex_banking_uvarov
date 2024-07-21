@@ -2,11 +2,6 @@ defmodule ExBankingTest do
   use ExUnit.Case
   alias ExBanking
 
-  setup do
-    {:ok, _pid} = ExBanking.start_link(%{})
-    :ok
-  end
-
   test "concurrent deposits" do
     ExBanking.create_user("user1")
 
