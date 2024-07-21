@@ -28,7 +28,9 @@ defmodule ExBankingTest do
       end
 
     results = Enum.map(tasks, &Task.await(&1))
-    too_many_requests_count = Enum.count(results, fn result -> result == {:error, :too_many_requests_to_user} end)
+
+    too_many_requests_count =
+      Enum.count(results, fn result -> result == {:error, :too_many_requests_to_user} end)
 
     assert too_many_requests_count == 2
     assert {:ok, 1000} == ExBanking.get_balance("user2", "USD")
@@ -37,6 +39,7 @@ defmodule ExBankingTest do
   test "exceeding withdraw max requests" do
     ExBanking.create_user("user3")
     ExBanking.deposit("user3", 10000, "USD")
+
     tasks =
       for _ <- 1..12 do
         Task.async(fn ->
@@ -45,7 +48,9 @@ defmodule ExBankingTest do
       end
 
     results = Enum.map(tasks, &Task.await(&1))
-    too_many_requests_count = Enum.count(results, fn result -> result == {:error, :too_many_requests_to_user} end)
+
+    too_many_requests_count =
+      Enum.count(results, fn result -> result == {:error, :too_many_requests_to_user} end)
 
     assert too_many_requests_count == 2
     assert {:ok, 9000} == ExBanking.get_balance("user3", "USD")
@@ -54,6 +59,7 @@ defmodule ExBankingTest do
   test "exceeding get_balance max requests" do
     ExBanking.create_user("user4")
     ExBanking.deposit("user4", 10000, "USD")
+
     tasks =
       for _ <- 1..12 do
         Task.async(fn ->
@@ -62,7 +68,9 @@ defmodule ExBankingTest do
       end
 
     results = Enum.map(tasks, &Task.await(&1))
-    too_many_requests_count = Enum.count(results, fn result -> result == {:error, :too_many_requests_to_user} end)
+
+    too_many_requests_count =
+      Enum.count(results, fn result -> result == {:error, :too_many_requests_to_user} end)
 
     assert too_many_requests_count == 2
     assert {:ok, 10000} == ExBanking.get_balance("user4", "USD")
@@ -82,7 +90,9 @@ defmodule ExBankingTest do
       end
 
     results = Enum.map(tasks, &Task.await(&1))
-    too_many_requests_count = Enum.count(results, fn result -> result == {:error, :too_many_requests_to_sender} end)
+
+    too_many_requests_count =
+      Enum.count(results, fn result -> result == {:error, :too_many_requests_to_sender} end)
 
     assert too_many_requests_count == 2
     assert {:ok, 9000} == ExBanking.get_balance("user5", "USD")
@@ -90,26 +100,30 @@ defmodule ExBankingTest do
   end
 
   test "exceeding send max requests to receiver" do
-    ExBanking.create_user("user5")
-    ExBanking.create_user("user6")
-    ExBanking.deposit("user5", 10000, "USD")
-    ExBanking.deposit("user6", 1000, "USD")
+    ExBanking.create_user("user7")
+    ExBanking.create_user("user8")
+    ExBanking.deposit("user7", 10000, "USD")
+    ExBanking.deposit("user8", 1000, "USD")
 
     tasks =
-      for _ <- 1..6 do
+      for _ <- 1..12 do
         [
-        Task.async(fn ->
-          ExBanking.send("user5", "user6", 100, "USD")
-        end)
-      ]
+          Task.async(fn -> ExBanking.deposit("user8", 500, "USD") end),
+          Task.async(fn ->
+            ExBanking.send("user7", "user8", 100, "USD")
+          end)
+        ]
       end
+      |> List.flatten()
 
     results = Enum.map(tasks, &Task.await(&1))
-    too_many_requests_count = Enum.count(results, fn result -> result |> IO.inspect() end)
 
-    assert too_many_requests_count == 2
-    assert {:ok, 9000} == ExBanking.get_balance("user5", "USD")
-    assert {:ok, 2000} == ExBanking.get_balance("user6", "USD")
+    too_many_requests_count =
+      Enum.count(results, fn result -> result == {:error, :too_many_requests_to_receiver} end)
+
+    assert too_many_requests_count == 7
+    assert {:ok, 9500} == ExBanking.get_balance("user7", "USD")
+    assert {:ok, 4000} == ExBanking.get_balance("user8", "USD")
   end
 
   test "exceeding max requests by different operations for a single user" do
@@ -130,15 +144,14 @@ defmodule ExBankingTest do
       |> List.flatten()
 
     results = Enum.map(tasks, &Task.await(&1))
-    too_many_requests_count = Enum.count(results, fn result -> result == {:error, :too_many_requests_to_sender} end)
+
+    too_many_requests_count =
+      Enum.count(results, fn result -> result == {:error, :too_many_requests_to_sender} end)
 
     # Checking that there are more than 2 requests that exceeded the limit (since we expect 10 successful ones)
     assert too_many_requests_count >= 2
 
     # Checking the final balance
     assert {:ok, 9950} == ExBanking.get_balance("user1", "USD")
-
   end
-
-
 end

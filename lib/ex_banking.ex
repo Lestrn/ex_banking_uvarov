@@ -60,10 +60,17 @@ defmodule ExBanking do
     {:error, :wrong_arguments}
   end
 
-  def get_balance(username, currency) do
+  @spec get_balance(user :: String.t(), currency :: String.t()) ::
+          {:ok, balance :: number}
+          | {:error, :wrong_arguments | :user_does_not_exist | :too_many_requests_to_user}
+  def get_balance(username, currency) when is_binary(username) and is_binary(currency) do
     start_genserver_if_its_not_running()
     parameters = %{username: username, currency: currency}
     GenServer.call(__MODULE__, {:get_balance, parameters})
+  end
+
+  def get_balance(_username, _currency) do
+    {:error, :wrong_arguments}
   end
 
   @spec send(
@@ -170,45 +177,56 @@ defmodule ExBanking do
     # for check pending requests
     :timer.sleep(10)
 
-    with {:error, error} <-
-           check_pending_requests_for_send_function(
-             state,
-             parameters.from_username,
-             parameters.to_username
-           ) do
-      {:reply, error, state}
+    with {:error, user_exists_error} <-
+           sender_user_exists_helper(parameters.from_username, parameters.to_username, state) do
+      {:reply, {:error, user_exists_error}, state}
     else
       :ok ->
-        GenServer.cast(__MODULE__, {:add_amount_requests_for_user, parameters.from_username})
-        GenServer.cast(__MODULE__, {:add_amount_requests_for_user, parameters.to_username})
-
-        with {:ok, updated_state_from_sender} <-
-               withdraw(parameters.from_username, parameters.amount, parameters.currency, state),
-             {:ok, updated_state_from_receiver} <-
-               deposit(
-                 parameters.to_username,
-                 parameters.amount,
-                 parameters.currency,
-                 updated_state_from_sender
+        with {:error, error} <-
+               check_pending_requests_for_send_function(
+                 state,
+                 parameters.from_username,
+                 parameters.to_username
                ) do
-          sender_balance =
-            Map.get(updated_state_from_receiver, parameters.from_username)
-            |> extract_balance_from_user(parameters.currency)
-
-          receiver_balance =
-            Map.get(updated_state_from_receiver, parameters.to_username)
-            |> extract_balance_from_user(parameters.currency)
-
-          {:reply, {:ok, sender_balance, receiver_balance},
-           updated_state_from_receiver
-           |> update_amount_of_requests_for_user(parameters.from_username, false)
-           |> update_amount_of_requests_for_user(parameters.to_username, false)}
+          {:reply, error, state}
         else
-          error ->
-            {:reply, error,
-             state
-             |> update_amount_of_requests_for_user(parameters.from_username, false)
-             |> update_amount_of_requests_for_user(parameters.to_username, false)}
+          :ok ->
+            GenServer.cast(__MODULE__, {:add_amount_requests_for_user, parameters.from_username})
+            GenServer.cast(__MODULE__, {:add_amount_requests_for_user, parameters.to_username})
+
+            with {:ok, updated_state_from_sender} <-
+                   withdraw(
+                     parameters.from_username,
+                     parameters.amount,
+                     parameters.currency,
+                     state
+                   ),
+                 {:ok, updated_state_from_receiver} <-
+                   deposit(
+                     parameters.to_username,
+                     parameters.amount,
+                     parameters.currency,
+                     updated_state_from_sender
+                   ) do
+              sender_balance =
+                Map.get(updated_state_from_receiver, parameters.from_username)
+                |> extract_balance_from_user(parameters.currency)
+
+              receiver_balance =
+                Map.get(updated_state_from_receiver, parameters.to_username)
+                |> extract_balance_from_user(parameters.currency)
+
+              {:reply, {:ok, sender_balance, receiver_balance},
+               updated_state_from_receiver
+               |> update_amount_of_requests_for_user(parameters.from_username, false)
+               |> update_amount_of_requests_for_user(parameters.to_username, false)}
+            else
+              error ->
+                {:reply, error,
+                 state
+                 |> update_amount_of_requests_for_user(parameters.from_username, false)
+                 |> update_amount_of_requests_for_user(parameters.to_username, false)}
+            end
         end
     end
   end
@@ -217,21 +235,38 @@ defmodule ExBanking do
     # for check pending requests
     :timer.sleep(10)
 
-    with {:error, error} <- check_pending_requests(state, parameters.username) do
-      {:reply, error, state}
+    if(!user_exists?(state, parameters.username)) do
+      {:reply, {:error, :user_already_exists}, state}
     else
-      :ok ->
-        GenServer.cast(__MODULE__, {:add_amount_requests_for_user, parameters.username})
-        user = state |> Map.get(parameters.username)
+      with {:error, error} <- check_pending_requests(state, parameters.username) do
+        {:reply, error, state}
+      else
+        :ok ->
+          GenServer.cast(__MODULE__, {:add_amount_requests_for_user, parameters.username})
+          user = state |> Map.get(parameters.username)
 
-        {:reply, {:ok, Map.get(user.balance, parameters.currency)},
-         state |> update_amount_of_requests_for_user(parameters.username, false)}
+          {:reply, {:ok, Map.get(user.balance, parameters.currency, 0)},
+           state |> update_amount_of_requests_for_user(parameters.username, false)}
+      end
     end
   end
 
   # private functions
   defp user_exists?(state, username) do
     Map.has_key?(state, username)
+  end
+
+  defp sender_user_exists_helper(sender_username, receiver_username, state) do
+    cond do
+      not user_exists?(state, sender_username) ->
+        {:error, :sender_does_not_exist}
+
+      not user_exists?(state, receiver_username) ->
+        {:error, :receiver_does_not_exist}
+
+      true ->
+        :ok
+    end
   end
 
   defp update_amount_of_requests_for_user(state, username, is_add) when is_add do
@@ -272,7 +307,7 @@ defmodule ExBanking do
         else
           :ok ->
             :ok
-          end
+        end
     end
   end
 
