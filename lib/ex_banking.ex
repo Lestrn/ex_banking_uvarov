@@ -166,7 +166,7 @@ defmodule ExBanking do
                new_state |> update_amount_of_requests_for_user(parameters.username, false)}
 
             {:error, msg} ->
-              {:reply, msg,
+              {:reply, {:error, msg},
                state |> update_amount_of_requests_for_user(parameters.username, false)}
           end
       end
@@ -236,7 +236,7 @@ defmodule ExBanking do
     :timer.sleep(10)
 
     if(!user_exists?(state, parameters.username)) do
-      {:reply, {:error, :user_already_exists}, state}
+      {:reply, {:error, :user_does_not_exist}, state}
     else
       with {:error, error} <- check_pending_requests(state, parameters.username) do
         {:reply, error, state}
@@ -331,7 +331,7 @@ defmodule ExBanking do
 
       {:ok, updated_state}
     else
-      result -> {:error, result}
+      result -> result
     end
   end
 
