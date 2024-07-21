@@ -63,14 +63,28 @@ defmodule ExBanking do
     {:noreply, Map.put(state, username, %User{name: username, balance: %{}})}
   end
 
-  def handle_call({:deposit, parameters}, _from, state) do
-    {:ok, updated_state} = deposit(parameters.username, parameters.amount, parameters.currency, state)
+  def handle_cast({:add_amount_requests_for_user, parameters}, state) do
+    {:noreply, update_amount_of_requests_for_user(state, parameters, true)}
+  end
 
-    {:reply,
-     {:ok,
-      updated_state
-      |> Map.get(parameters.username)
-      |> extract_balance_from_user(parameters.currency)}, updated_state}
+  def handle_call({:deposit, parameters}, _from, state) do
+    with {:error, error} <- check_pending_requests(state, parameters.username) do
+      {:reply, {:error, error}, state}
+    else
+      :ok ->
+        GenServer.cast(__MODULE__, {:add_amount_requests_for_user, parameters})
+
+        {:ok, updated_state} =
+          deposit(parameters.username, parameters.amount, parameters.currency, state)
+
+        {:reply,
+         {:ok,
+          updated_state
+          |> update_amount_of_requests_for_user(parameters, false)
+          |> Map.get(parameters.username)
+          |> extract_balance_from_user(parameters.currency)},
+         updated_state |> update_amount_of_requests_for_user(parameters, false)}
+    end
   end
 
   def handle_call({:withdraw, parameters}, _from, state) do
@@ -90,9 +104,20 @@ defmodule ExBanking do
     with {:ok, updated_state_from_sender} <-
            withdraw(parameters.from_username, parameters.amount, parameters.currency, state),
          {:ok, updated_state_from_receiver} <-
-           deposit(parameters.to_username, parameters.amount, parameters.currency, updated_state_from_sender) do
-      sender_balance = Map.get(updated_state_from_receiver, parameters.from_username) |> extract_balance_from_user(parameters.currency)
-      receiver_balance = Map.get(updated_state_from_receiver, parameters.to_username) |> extract_balance_from_user(parameters.currency)
+           deposit(
+             parameters.to_username,
+             parameters.amount,
+             parameters.currency,
+             updated_state_from_sender
+           ) do
+      sender_balance =
+        Map.get(updated_state_from_receiver, parameters.from_username)
+        |> extract_balance_from_user(parameters.currency)
+
+      receiver_balance =
+        Map.get(updated_state_from_receiver, parameters.to_username)
+        |> extract_balance_from_user(parameters.currency)
+
       {:reply, {:ok, sender_balance, receiver_balance}, updated_state_from_receiver}
     else
       error -> {:reply, error, state}
@@ -106,11 +131,41 @@ defmodule ExBanking do
 
   # private functions
 
+  defp update_amount_of_requests_for_user(state, parameters, is_add) when is_add do
+    user = state |> Map.get(parameters.username)
+
+    state
+    |> Map.put(
+      parameters.username,
+      update_user(user.balance, user.name, user.pending_requests + 1)
+    )
+  end
+
+  defp update_amount_of_requests_for_user(state, parameters, _is_add) do
+    user = state |> Map.get(parameters.username)
+
+    state
+    |> Map.put(
+      parameters.username,
+      update_user(user.balance, user.name, user.pending_requests - 1)
+    )
+  end
+
+  defp check_pending_requests(state, username) do
+    if extract_pending_requests_from_state(state, username) + 1 <= 10 do
+      :ok
+    else
+      {:error, :too_many_requests_to_user}
+    end
+  end
+
   defp deposit(username, amount, currency, state) do
-    updated_state = Map.get(state, username)
-    |> deposit_balance(currency, amount)
-    |> update_user(username)
-    |> update_state(username, state)
+    updated_state =
+      Map.get(state, username)
+      |> deposit_balance(currency, amount)
+      |> update_user(username, extract_pending_requests_from_state(state, username))
+      |> update_state(username, state)
+
     {:ok, updated_state}
   end
 
@@ -119,13 +174,18 @@ defmodule ExBanking do
            Map.get(state, username)
            |> withdraw_balance(currency, amount) do
       updated_state =
-        update_user(balance, username)
+        update_user(balance, username, extract_pending_requests_from_state(state, username))
         |> update_state(username, state)
 
       {:ok, updated_state}
     else
       result -> {:error, result}
     end
+  end
+
+  defp extract_pending_requests_from_state(state, username) do
+    user = state |> Map.get(username)
+    user.pending_requests
   end
 
   defp extract_balance_from_user(user, currency) do
@@ -148,8 +208,8 @@ defmodule ExBanking do
     end
   end
 
-  defp update_user(balance, username) do
-    %User{name: username, balance: balance}
+  defp update_user(balance, username, pending_requests) do
+    %User{name: username, balance: balance, pending_requests: pending_requests}
   end
 
   defp update_state(updated_user, key, current_state) do
@@ -157,11 +217,8 @@ defmodule ExBanking do
   end
 
   defp start_genserver_if_its_not_running() do
-    if Process.whereis(__MODULE__) do
-      IO.puts("GenServer is running")
-    else
+    if !Process.whereis(__MODULE__) do
       start_link()
-      IO.puts("Started GenServer")
     end
   end
 end
