@@ -38,6 +38,19 @@ defmodule ExBanking do
     GenServer.call(__MODULE__, {:deposit, parameters})
   end
 
+  def deposit(username, amount, currency)
+      when is_binary(username) and is_float(amount) and is_binary(currency) do
+    start_genserver_if_its_not_running()
+
+    with {true, amount} <- check_float_is_in_correct_format(amount) do
+      parameters = %{username: username, amount: amount / 100, currency: currency}
+      GenServer.call(__MODULE__, {:deposit, parameters})
+    else
+      false ->
+        {:error, :wrong_arguments}
+    end
+  end
+
   def deposit(_username, _amount, _currency) do
     {:error, :wrong_arguments}
   end
@@ -54,6 +67,19 @@ defmodule ExBanking do
     start_genserver_if_its_not_running()
     parameters = %{username: username, amount: amount, currency: currency}
     GenServer.call(__MODULE__, {:withdraw, parameters})
+  end
+
+  def withdraw(username, amount, currency)
+      when is_binary(username) and is_float(amount) and is_binary(currency) do
+    start_genserver_if_its_not_running()
+
+    with {true, amount} <- check_float_is_in_correct_format(amount) do
+      parameters = %{username: username, amount: amount / 100, currency: currency}
+      GenServer.call(__MODULE__, {:withdraw, parameters})
+    else
+      false ->
+        {:error, :wrong_arguments}
+    end
   end
 
   def withdraw(_username, _amount, _currency) do
@@ -90,6 +116,8 @@ defmodule ExBanking do
   def send(from_username, to_username, amount, currency)
       when is_binary(from_username) and is_binary(to_username) and is_integer(amount) and
              is_binary(currency) do
+    start_genserver_if_its_not_running()
+
     parameters = %{
       from_username: from_username,
       to_username: to_username,
@@ -98,6 +126,26 @@ defmodule ExBanking do
     }
 
     GenServer.call(__MODULE__, {:send, parameters})
+  end
+
+  def send(from_username, to_username, amount, currency)
+      when is_binary(from_username) and is_binary(to_username) and is_float(amount) and
+             is_binary(currency) do
+    start_genserver_if_its_not_running()
+
+    with {true, amount} <- check_float_is_in_correct_format(amount) do
+      parameters = %{
+        from_username: from_username,
+        to_username: to_username,
+        amount: amount / 100,
+        currency: currency
+      }
+
+      GenServer.call(__MODULE__, {:send, parameters})
+    else
+      false ->
+        {:error, :wrong_arguments}
+    end
   end
 
   def send(_from_username, _to_username, _amount, _currency) do
@@ -345,7 +393,8 @@ defmodule ExBanking do
   end
 
   defp deposit_balance(user, currency, amount) do
-    Map.put(user.balance, currency, extract_balance_from_user(user, currency) + amount)
+    updated_balance = (extract_balance_from_user(user, currency) * 100 + amount * 100) / 100
+    Map.put(user.balance, currency, updated_balance)
   end
 
   defp withdraw_balance(user, currency, amount) do
@@ -353,7 +402,8 @@ defmodule ExBanking do
 
     cond do
       current_balance >= amount ->
-        {:ok, Map.put(user.balance, currency, current_balance - amount)}
+        updated_balance = (current_balance * 100 - amount * 100) / 100
+        {:ok, Map.put(user.balance, currency, updated_balance)}
 
       true ->
         {:error, :not_enough_money}
@@ -371,6 +421,15 @@ defmodule ExBanking do
   defp start_genserver_if_its_not_running() do
     if !Process.whereis(__MODULE__) do
       start_link()
+    end
+  end
+
+  defp check_float_is_in_correct_format(amount) do
+    with {integer, ".0"} <- Integer.parse(Float.to_string(amount * 100)) do
+      {true, integer}
+    else
+      _ ->
+        false
     end
   end
 end
