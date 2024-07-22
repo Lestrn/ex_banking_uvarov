@@ -394,7 +394,7 @@ defmodule ExBanking do
 
   defp deposit_balance(user, currency, amount) do
     updated_balance = (extract_balance_from_user(user, currency) * 100 + amount * 100) / 100
-    Map.put(user.balance, currency, updated_balance)
+    Map.put(user.balance, currency, updated_balance |> Float.round(2))
   end
 
   defp withdraw_balance(user, currency, amount) do
@@ -403,7 +403,7 @@ defmodule ExBanking do
     cond do
       current_balance >= amount ->
         updated_balance = (current_balance * 100 - amount * 100) / 100
-        {:ok, Map.put(user.balance, currency, updated_balance)}
+        {:ok, Map.put(user.balance, currency, updated_balance |> Float.round(2))}
 
       true ->
         {:error, :not_enough_money}
