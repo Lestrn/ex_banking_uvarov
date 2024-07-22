@@ -265,4 +265,97 @@ defmodule ExBankingTest do
     assert {:error, :wrong_arguments} == ExBanking.send(123, "bank_user2", 100, "USD")
     assert {:error, :wrong_arguments} == ExBanking.send("bank_user1", 123, 100, "USD")
   end
+
+  #float testing
+
+  test "deposit successfully with float" do
+    ExBanking.create_user("bank_user2")
+    assert {:ok, 123.52} == ExBanking.deposit("bank_user2", 123.52, "USD")
+  end
+
+  test "deposit to non-existing bank_user with float" do
+    assert {:error, :user_does_not_exist} == ExBanking.deposit("non_user", 45.99, "USD")
+  end
+
+  test "deposit with invalid arguments with float" do
+    ExBanking.create_user("bank_user2")
+    assert {:error, :wrong_arguments} == ExBanking.deposit("bank_user2", "45.99", "USD")
+    assert {:error, :wrong_arguments} == ExBanking.deposit("bank_user2", 45.99, 123)
+    assert {:error, :wrong_arguments} == ExBanking.deposit(123, 45.99, "USD")
+    assert {:error, :wrong_arguments} == ExBanking.deposit("bank_user2", 45.999, "USD")
+  end
+
+  test "withdraw successfully with float" do
+    ExBanking.create_user("bank_user3")
+    ExBanking.deposit("bank_user3", 200.75, "USD")
+    assert {:ok, 150.50} == ExBanking.withdraw("bank_user3", 50.25, "USD")
+  end
+
+  test "withdraw from non-existing bank_user with float" do
+    assert {:error, :user_does_not_exist} == ExBanking.withdraw("non_user", 89.75, "USD")
+  end
+
+  test "withdraw with insufficient funds with float" do
+    ExBanking.create_user("bank_user3")
+    ExBanking.deposit("bank_user3", 30.20, "USD")
+    assert {:error, :not_enough_money} == ExBanking.withdraw("bank_user3", 50.50, "USD")
+  end
+
+  test "withdraw with invalid arguments with float" do
+    ExBanking.create_user("bank_user3")
+    assert {:error, :wrong_arguments} == ExBanking.withdraw("bank_user3", "50.50", "USD")
+    assert {:error, :wrong_arguments} == ExBanking.withdraw("bank_user3", 50.50, 123)
+    assert {:error, :wrong_arguments} == ExBanking.withdraw(123, 50.50, "USD")
+    assert {:error, :wrong_arguments} == ExBanking.withdraw("bank_user3", 50.505, "USD")
+  end
+
+  test "get balance successfully with float" do
+    ExBanking.create_user("bank_user1")
+    ExBanking.deposit("bank_user1", 78.47, "USD")
+    assert {:ok, 78.47} == ExBanking.get_balance("bank_user1", "USD")
+  end
+
+  test "get balance of non-existing bank_user with float" do
+    assert {:error, :user_does_not_exist} == ExBanking.get_balance("non_user", "USD")
+  end
+
+  test "get balance with invalid arguments with float" do
+    ExBanking.create_user("bank_user1")
+    assert {:error, :wrong_arguments} == ExBanking.get_balance("bank_user1", 123)
+    assert {:error, :wrong_arguments} == ExBanking.get_balance(123, "USD")
+  end
+
+  test "send money successfully with float" do
+    ExBanking.create_user("bank_user1")
+    ExBanking.create_user("bank_user2")
+    ExBanking.deposit("bank_user1", 500.99, "USD")
+    assert {:ok, 400.49, 100.5} == ExBanking.send("bank_user1", "bank_user2", 100.50, "USD")
+  end
+
+  test "send money with insufficient funds with float" do
+    ExBanking.create_user("bank_user1")
+    ExBanking.create_user("bank_user2")
+    ExBanking.deposit("bank_user1", 25.99, "USD")
+    assert {:error, :not_enough_money} == ExBanking.send("bank_user1", "bank_user2", 50.50, "USD")
+  end
+
+  test "send money from non-existing bank_user with float" do
+    ExBanking.create_user("bank_user2")
+    assert {:error, :sender_does_not_exist} == ExBanking.send("non_user", "bank_user2", 10.25, "USD")
+  end
+
+  test "send money to non-existing bank_user with float" do
+    ExBanking.create_user("bank_user1")
+    ExBanking.deposit("bank_user1", 30.30, "USD")
+    assert {:error, :receiver_does_not_exist} == ExBanking.send("bank_user1", "non_user", 30.30, "USD")
+  end
+
+  test "send money with invalid arguments with float" do
+    ExBanking.create_user("bank_user1")
+    ExBanking.create_user("bank_user2")
+    assert {:error, :wrong_arguments} == ExBanking.send("bank_user1", "bank_user2", "30.30", "USD")
+    assert {:error, :wrong_arguments} == ExBanking.send("bank_user1", "bank_user2", 30.30, 123)
+    assert {:error, :wrong_arguments} == ExBanking.send(123, "bank_user2", 30.30, "USD")
+    assert {:error, :wrong_arguments} == ExBanking.send("bank_user1", 123, 30.30, "USD")
+  end
 end
